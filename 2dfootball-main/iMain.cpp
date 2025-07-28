@@ -20,7 +20,7 @@ double playerposition[2][6][4]={{{width/2,length*8/10,width/2,length*8/10,}, {wi
 double newplayerposition[2][6][4]={{{width/2,length*8/10,width/2,length*8/10,}, {width/6,length*8/10,width/6,length*8/10}, {width*5/6,length*8/10,width*5/6,length*8/10} ,{width*4/6,length*7/10,width*4/6,length*7/10} ,{width*2/6,length*7/10,width*2/6,length*7/10}, {width/2,length*6/10,width/2,length*6/10} },{ {width/2,length*2/10,width/2,length*2/10},{width/6,length*2/10,width/6,length*2/10},{width*5/6,length*2/10,width*5/6,length*2/10},{width*4/6,length*7/20,width*4/6,length*7/20} ,{width*2/6,length*7/20,width*2/6,length*7/20}, {width/2,length/2,width/2,length/2} }};
 double ballpointer[4]={width/2,length/2};
 int activeplayer=5,ballstate=2,ballholder=activeplayer,activeplayeropp=5,helpingplayer=4,helpingplayeropp=4,lastTouch=1;
-int page_number=3,coverpagetime=100;
+int page_number=0,coverpagetime=100;
 double dxy=30;
 double positionField[2][6][4]={{{4*width/7, 3*width/7, length-gallary, length/2}, {3*width/7, gallary, length-gallary, 10*length/20}, {width-gallary, 4*width/7,  length-gallary, 10*length/20} , {width-gallary, 4*width/7, 10*length/20, gallary}, {3*width/7, gallary, 10*length/20, gallary}, {4*width/7, 3*width/7, length/2, gallary}}, {{4*width/7, 3*width/7, length/2, gallary}, {3*width/7, gallary, 10*length/20, gallary}, {width-gallary, 4*width/7, 10*length/20, gallary},{width-gallary, 4*width/7, length-gallary, 10*length/20}, {3*width/7, gallary, length-gallary, 10*length/20},  {4*width/7, 3*width/7, length-gallary, length/2}}};
 int dX=60, dY=100;
@@ -35,6 +35,16 @@ int passInitiated = 0;
 int crowdChannel = -1;
 int kickChannel = -1;
 int goalChannel = -1;
+
+typedef struct {
+    char type[10]; // "Match" or "Penalty"
+    int team0_score;
+    int team1_score;
+} ScoreEntry;
+
+ScoreEntry *scores = NULL;
+int score_count = 0;
+int max_scores = 0;
 void whistle_sound() {
     if (!whistlePlayed) {
         printf("Attempting to load whistle.wav\n");
@@ -1493,29 +1503,105 @@ void volumeMark() {
         iText(330, 170, "OFF", GLUT_BITMAP_HELVETICA_18);
     }
 }
-int scoreSave(){
-    FILE *ifp=NULL;
-    ifp=fopen("scores.txt","a+");
-if(ifp==NULL){
-    printf("Error\n");
-    exit(1);
-fprintf(ifp,"Team 0: %d  %d : Team 1\n",&scoreplayer,&scoreopp);
-fclose(ifp);
-return 1;
+int scoreSave() {
+    FILE *ifp = fopen("scores.txt", "a+");
+    if (ifp == NULL) {
+        printf("Error opening scores.txt for writing: %s\n", strerror(errno));
+        return 0;
+    }
+    if (page_number == 1 || page_number == 2) {
+        fprintf(ifp, "Match - Team 0: %d  Team 1: %d\n", scoreopp, scoreplayer);
+    } else if (page_number == 3) {
+        fprintf(ifp, "Penalty - Team 0: %d  Team 1: %d\n", penaltyscores[0], penaltyscores[1]);
+    }
+    fclose(ifp);
+    return 1;
 }
-}
-void high_score(){
-    FILE *ofp=fopen("scores.txt","r+");
-    if(ofp==NULL){
-    printf("Error\n");
-    exit(1);
-}
- while(!feof(ofp)){
-    fscanf(ofp,"Team 0: %d  %d : Team 1",&scoreplayer,&scoreopp);
-    //iText()
- }
-    
+void high_score() {
+    FILE *ofp = fopen("scores.txt", "r");
+    if (ofp == NULL) {
+        printf("Error opening scores.txt: %s\n", strerror(errno));
+        score_count = 0;
+        return;
+    }
 
+    // Free previous scores
+    if (scores != NULL) {
+        free(scores);
+        scores = NULL;
+        score_count = 0;
+        max_scores = 0;
+    }
+
+    char line[100];
+    score_count = 0;
+    max_scores = 10;
+    scores = (ScoreEntry *)malloc(max_scores * sizeof(ScoreEntry));
+    if (scores == NULL) {
+        printf("Initial memory allocation failed\n");
+        fclose(ofp);
+        return;
+    }
+
+    while (fgets(line, sizeof(line), ofp)) {
+        printf("Reading line: %s", line);
+        char type[10];
+        int team0, team1;
+        line[strcspn(line, "\n")] = 0;
+        if (sscanf(line, "%9s - Team 0: %d Team 1: %d", type, &team0, &team1) == 3) {
+            printf("Parsed: Type=%s, Team0=%d, Team1=%d\n", type, team0, team1);
+            if (score_count >= max_scores) {
+                max_scores *= 2;
+                ScoreEntry *temp = (ScoreEntry *)realloc(scores, max_scores * sizeof(ScoreEntry));
+                if (!temp) {
+                    printf("Realloc failed at score_count=%d\n", score_count);
+                    free(scores);
+                    scores = NULL;
+                    score_count = 0;
+                    max_scores = 0;
+                    fclose(ofp);
+                    return;
+                }
+                scores = temp;
+            }
+            strncpy(scores[score_count].type, type, sizeof(scores[score_count].type) - 1);
+            scores[score_count].type[sizeof(scores[score_count].type) - 1] = '\0';
+            scores[score_count].team0_score = team0;
+            scores[score_count].team1_score = team1;
+            score_count++;
+        } else {
+            printf("Failed to parse line: %s\n", line);
+        }
+    }
+    fclose(ofp);
+    printf("Loaded %d scores\n", score_count);
+}
+void drawHighScores() {
+    // Draw white rectangle background (width=540, length=720)
+    iSetColor(255, 255, 255); // White
+    iFilledRectangle(50, 300, 440, 360); // Rectangle from (50, 300) to (490, 660)
+    printf("Drawing white rectangle at (50, 300, 440, 360)\n");
+
+    // Test text to confirm iText rendering
+    iSetColor(0, 0, 0); // Black text for contrast
+    iText(60, 640, "HIGH SCORES", GLUT_BITMAP_HELVETICA_18);
+    printf("Drawing test text 'HIGH SCORES' at (60, 640)\n");
+
+    // Draw scores or error message
+    if (scores == NULL || score_count == 0) {
+        iText(60, 610, "No scores loaded or file error", GLUT_BITMAP_HELVETICA_18);
+        printf("No scores to display (score_count=%d, scores=%p)\n", score_count, (void*)scores);
+        return;
+    }
+
+    char score_text[100];
+    int y = 610; // Start scores below title
+    for (int i = 0; i < score_count; i++) {
+        sprintf(score_text, "%s - Team 0: %d  Team 1: %d", scores[i].type, scores[i].team0_score, scores[i].team1_score);
+        iText(60, y, score_text, GLUT_BITMAP_HELVETICA_18);
+        printf("Rendering score %d: %s at (60, %d)\n", i, score_text, y);
+        y -= 30; // Space scores vertically
+    }
 }
 /*
 function iDraw() is called again and again by the system.
@@ -1575,6 +1661,7 @@ void iDraw()
     else if(page_number==4)
     { 
         iShowImage(0,0,"highscores.png");
+                drawHighScores();
         backbutton();
     }
     else if(page_number==5)
@@ -1663,6 +1750,7 @@ void iMouse(int button, int state, int mx, int my)
         {
             if(mx<width && mx>width-20 && my<length && my>length-20)
             {
+                scoreSave();
                 page_number=0;
                 iStopAllSounds();
                 gametime+=timer-tracktime;
@@ -1673,6 +1761,7 @@ void iMouse(int button, int state, int mx, int my)
             //crowd_sound();
             if(mx<width && mx>width-20 && my<length && my>length-20)
             {
+                scoreSave();
                 page_number=0;
                 resetPenaltyVariables();
             }
@@ -1682,6 +1771,7 @@ void iMouse(int button, int state, int mx, int my)
             {
                 if(mx>=width-70 && mx<=width-10 && my>=50 && my<=72)
                 {
+                    scoreSave();
                     page_number=0;
                     resetPenaltyVariables();
                 }
