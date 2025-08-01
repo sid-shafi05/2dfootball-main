@@ -1,7 +1,7 @@
-Penalty - Team 0: 4  Team 1: 3
-Penalty - Team 0: 0  Team 1: 0
-Penalty - Team 0: 0  Team 1: 0
-Match - Team 0: 0  Team 1: 1
-Penalty - Team 0: 3  Team 1: 4
-Penalty - Team 0: 0  Team 1: 1
-Penalty - Team 0: 5  Team 1: 6
+
+Match: 0 8
+Match: 0 2
+Match: 6 0
+Match: 0 0
+Match: 0 0
+Match: 0 0

@@ -7,7 +7,8 @@
 Sprite players[6],opponents[6],gk[2],fball, pauseButtons;
 Image ball[1],player[1],opponent[1],field, backButton, pauseButton; 
 double length=120*6 , width = 90*6, gallary=40, goalbar=160;
-long long int i,ii,gametime=0,tracktime=0;
+long long int i,ii,tracktime=0;
+double gametime=0;
 double timer=1;
 int sec,minit;
 int level,scoreplayer=0,scoreopp=0;
@@ -27,6 +28,13 @@ int dX=60, dY=100;
 int frameCount = 0;
 int previousTime = 0, previousFpsTime = 0;
 int fps = 0;
+double lastballswipe=0;
+double dt=500;
+int minutes=0;
+int seconds=0;
+int gameended=0;
+int gameLoaded=0;
+char type[100][100];
 int volume=100;
 int kickoff=0;
 int whistlePlayed=0;
@@ -35,7 +43,14 @@ int passInitiated = 0;
 int crowdChannel = -1;
 int kickChannel = -1;
 int goalChannel = -1;
-
+/*void typeCheck(){
+    if(page_number==1||page_number==2){
+        strcpy(type[0],"Match");
+    }
+    else if(page_number==3){
+        strcpy(type,"Penalty");
+    }
+}*/
 typedef struct {
     char type[10]; // "Match" or "Penalty"
     int team0_score;
@@ -60,6 +75,7 @@ void crowd_sound(){
         iPlaySound("crowd.wav", true, volume);
     }
 }
+
 int const max_shoot=15;
 double spacing=30;
 double penaltyPosition[2][6][2]={{{width/2+spacing*1,length/2},{width/2+spacing*2,length/2},{width/2+spacing*3,length/2},{width/2+spacing*4,length/2},{width/2+spacing*5,length/2},{width/2+spacing*6,length/2}},{{width/2-spacing*1,length/2},{width/2-spacing*2,length/2},{width/2-spacing*3,length/2},{width/2-spacing*4,length/2},{width/2-spacing*5,length/2},{width/2-spacing*6,length/2}}};
@@ -121,30 +137,6 @@ void iShowSpeed(double x, double y)
     iText(x, y, fpsText);
 }
 
-/*int igetspeed()
-{
-    int currentTime = glutGet(GLUT_ELAPSED_TIME);
-    frameCount++;
-    if (previousFpsTime == 0)
-    {
-        previousFpsTime = currentTime; // Initialize on first call
-        frameCount = 0;
-    }
-    else
-    {
-        int elapsedFpsTime = currentTime - previousFpsTime;
-
-        if (elapsedFpsTime > 1000)
-        {
-            fps = (frameCount * 1000.0f) / elapsedFpsTime;
-            frameCount = 0;
-            previousFpsTime = currentTime;
-        }
-    }
-
-    return fps;
-}*/
-
 void loadresources()
 {
     
@@ -189,7 +181,7 @@ void resetvariables()
     memcpy(gkpointer, newgk, 4 * sizeof(double));
     memcpy(playerposition, newplayerposition, 2 * 6 * 4 * sizeof(double));
     activeplayer = 5;
-    ballstate = 1;
+    ballstate = 2;
     ballholder = 5;
     gametime = 0;
     whistlePlayed = 0;
@@ -198,9 +190,177 @@ void resetvariables()
     crowdChannel = -1;
     kickChannel = -1;
     goalChannel = -1;
+    gameended=0;
     iStopAllSounds();
 }
+void saveGame() {
+    FILE *fp = fopen("savefile.txt", "w");
+    if (!fp) {
+        printf("Failed to open save file!\n");
+        return;
+    }
 
+    // Save basic stats and state
+    fprintf(fp, "%d %d %lf %lf %d %d\n", scoreplayer, scoreopp, gametime, timer, page_number, gameended);
+    fprintf(fp, "%d %d %d %d %d %d %d\n", activeplayer, ballstate, ballholder, activeplayeropp, helpingplayer, helpingplayeropp, lastTouch);
+
+    // Ball and player-related data
+    for (int i = 0; i < 4; i++) fprintf(fp, "%lf ", ballpointer[i]);
+    for (int i = 0; i < 4; i++) fprintf(fp, "%lf ", newball[i]);
+    fprintf(fp, "\n");
+
+    // GK pointers
+    for (int team = 0; team < 2; team++) for (int i = 0; i < 2; i++) fprintf(fp, "%lf ", gkpointer[team][i]);
+    for (int team = 0; team < 2; team++) for (int i = 0; i < 2; i++) fprintf(fp, "%lf ", newgk[team][i]);
+    fprintf(fp, "\n");
+
+    // Player positions and new positions
+    for (int t = 0; t < 2; t++) {
+        for (int p = 0; p < 6; p++) {
+            for (int d = 0; d < 4; d++) {
+                fprintf(fp, "%lf ", playerposition[t][p][d]);
+            }
+        }
+    }
+    for (int t = 0; t < 2; t++) {
+        for (int p = 0; p < 6; p++) {
+            for (int d = 0; d < 4; d++) {
+                fprintf(fp, "%lf ", newplayerposition[t][p][d]);
+            }
+        }
+    }
+
+    // Extra values (you can expand this as needed)
+    fprintf(fp, "%d %d %d %d\n", volume, kickoff, whistlePlayed, crowdPlaying);
+
+    fclose(fp);
+    printf("Game saved successfully!\n");
+}
+void loadGame() {
+    FILE *fp = fopen("savefile.txt", "r");
+    if (!fp) {
+        printf("Save file not found or cannot be opened!\n");
+        resetvariables(); // Reset to default state if no save file
+        return;
+    }
+
+    // Read basic stats and state
+    if (fscanf(fp, "%d %d %lf %lf %d %d", &scoreplayer, &scoreopp, &gametime, &timer, &page_number, &gameended) != 6) {
+        printf("Error reading basic game stats from save file!\n");
+        fclose(fp);
+        resetvariables();
+        return;
+    }
+
+    // Read ball and player-related data
+    if (fscanf(fp, "%d %d %d %d %d %d %d", &activeplayer, &ballstate, &ballholder, &activeplayeropp, &helpingplayer, &helpingplayeropp, &lastTouch) != 7) {
+        printf("Error reading player and ball state from save file!\n");
+        fclose(fp);
+        resetvariables();
+        return;
+    }
+
+    // Read ballpointer
+    for (int i = 0; i < 4; i++) {
+        if (fscanf(fp, "%lf", &ballpointer[i]) != 1) {
+            printf("Error reading ballpointer data!\n");
+            fclose(fp);
+            resetvariables();
+            return;
+        }
+    }
+
+    // Read newball
+    for (int i = 0; i < 4; i++) {
+        if (fscanf(fp, "%lf", &newball[i]) != 1) {
+            printf("Error reading newball data!\n");
+            fclose(fp);
+            resetvariables();
+            return;
+        }
+    }
+
+    // Read gkpointer
+    for (int team = 0; team < 2; team++) {
+        for (int i = 0; i < 2; i++) {
+            if (fscanf(fp, "%lf", &gkpointer[team][i]) != 1) {
+                printf("Error reading gkpointer data!\n");
+                fclose(fp);
+                resetvariables();
+                return;
+            }
+        }
+    }
+
+    // Read newgk
+    for (int team = 0; team < 2; team++) {
+        for (int i = 0; i < 2; i++) {
+            if (fscanf(fp, "%lf", &newgk[team][i]) != 1) {
+                printf("Error reading newgk data!\n");
+                fclose(fp);
+                resetvariables();
+                return;
+            }
+        }
+    }
+
+    // Read playerposition
+    for (int t = 0; t < 2; t++) {
+        for (int p = 0; p < 6; p++) {
+            for (int d = 0; d < 4; d++) {
+                if (fscanf(fp, "%lf", &playerposition[t][p][d]) != 1) {
+                    printf("Error reading playerposition data!\n");
+                    fclose(fp);
+                    resetvariables();
+                    return;
+                }
+            }
+        }
+    }
+
+    // Read newplayerposition
+    for (int t = 0; t < 2; t++) {
+        for (int p = 0; p < 6; p++) {
+            for (int d = 0; d < 4; d++) {
+                if (fscanf(fp, "%lf", &newplayerposition[t][p][d]) != 1) {
+                    printf("Error reading newplayerposition data!\n");
+                    fclose(fp);
+                    resetvariables();
+                    return;
+                }
+            }
+        }
+    }
+
+    // Read extra values
+    if (fscanf(fp, "%d %d %d %d", &volume, &kickoff, &whistlePlayed, &crowdPlaying) != 4) {
+        printf("Error reading extra values from save file!\n");
+        fclose(fp);
+        resetvariables();
+        return;
+    }
+
+    // Validate loaded data
+    if (page_number != 1 && page_number != 2 && page_number != 3) {
+        printf("Invalid page_number (%d) in save file, resetting!\n", page_number);
+        resetvariables();
+        page_number = 0; // Return to main menu
+        fclose(fp);
+        return;
+    }
+
+    // Reinitialize resources and sound
+    loadresources();
+    iInitializeSound();
+    if (volume == 100 && crowdPlaying) {
+        crowdChannel = iPlaySound("crowd.wav", true, volume);
+    }
+
+    gameLoaded = 1;
+    tracktime = timer; // Sync tracktime with current timer
+    printf("Game loaded successfully!\n");
+    fclose(fp);
+}
 int playerOnTheWay(double x1,double y1,double x3,double y3,double x2,double y2,double r)
 {
     if((abs((int)((y2-y1)*x3-(x2-x1)*y3+y1*(x2-x1)-x1*(y2-y1)))/ sqrt((y2-y1)*(y2-y1)+(x2-x1)*(x2-x1)))>3*r)
@@ -324,7 +484,7 @@ void chooseAndTakePosition()
         {
             if (timetoChoosePosition(1,j))
             {
-                if ((int)timer % (3000 + rand() % 3000) <= 10)
+                if ((int)timer % (100+rand() % 4000) <= 10)
                     choosePosition(1,j,positionField[1][j][0],positionField[1][j][1],positionField[1][j][2],positionField[1][j][3],5*width/20,5*length/20); // team 1
             }
             else
@@ -345,7 +505,7 @@ void chooseAndTakePosition()
         {
             if (timetoChoosePosition(0,j))
             {
-                if ((int)timer % (3000 + rand() % 3000) <= 100)
+                if ((int)timer % (100+rand() % 4000) <= 10)
                     choosePosition(0,j,positionField[0][j][0],positionField[0][j][1],positionField[0][j][2],positionField[0][j][3],4*width/20,5*length/20); // team 0
             }
             else
@@ -468,12 +628,16 @@ void handlecollission()
         {
             if(checkcollision(playerposition[1][i][0],playerposition[1][i][1],playerposition[1][ii][0],playerposition[1][ii][1],2*playerradius))
             {
-                if(ballstate==1)
+                if(timer-lastballswipe>dt)
                 {
-                    if(ballholder==i)
-                        ballholder=ii;
-                    else if(ballholder==ii)
-                        ballholder=i;
+                    if(ballstate==1)
+                    {
+                        if(ballholder==i)
+                            ballholder=ii;
+                        else if(ballholder==ii)
+                            ballholder=i;
+                    }
+                    lastballswipe=0;
                 }
                 if(playerposition[1][i][0]>playerposition[1][ii][0])
                 {
@@ -498,12 +662,16 @@ void handlecollission()
             }
             if(checkcollision(playerposition[0][i][0],playerposition[0][i][1],playerposition[0][ii][0],playerposition[0][ii][1],2*playerradius))
             {
-                if(ballstate==-1)
+                if(timer-lastballswipe>dt)
                 {
-                    if(ballholder==i)
-                        ballholder=ii;
-                    else if(ballholder==ii)
-                        ballholder=i;
+                    if(ballstate==-1)
+                    {
+                        if(ballholder==i)
+                            ballholder=ii;
+                        else if(ballholder==ii)
+                            ballholder=i;
+                    }
+                    lastballswipe=0;
                 }
                 if(playerposition[0][i][0]>playerposition[0][ii][0])
                 {
@@ -528,18 +696,22 @@ void handlecollission()
             }
             if(checkcollision(playerposition[1][i][0],playerposition[1][i][1],playerposition[0][ii][0],playerposition[0][ii][1],2*playerradius))
             {
-                if(ballholder!=-1)
+                if(timer-lastballswipe>dt)
                 {
-                    if(ballstate==1 && ballholder==i)
+                    if(ballholder!=-1)
                     {
-                        ballstate=-1;
-                        ballholder=ii;
+                        if(ballstate==1 && ballholder==i)
+                        {
+                            ballstate=-1;
+                            ballholder=ii;
+                        }
+                        else if(ballstate==-1 && ballholder==ii)
+                        {
+                            ballstate=1;
+                            ballholder=i;
+                        }
                     }
-                    else if(ballstate==-1 && ballholder==ii)
-                    {
-                        ballstate=1;
-                        ballholder=i;
-                    }
+                    lastballswipe=0;
                 }
                 if(playerposition[1][i][0]>playerposition[0][ii][0])
                 {
@@ -617,8 +789,8 @@ void drawScoreboard()
 {
     char score_text[50];
     char time_text[20];
-    int minutes = gametime / 60000; // Convert milliseconds to minutes
-    int seconds = (gametime / 1000) % 60; // Convert milliseconds to seconds
+    minutes = 15*(gametime / (60*120)); // Convert milliseconds to minutes
+    seconds = (15*(int)(gametime / 120) % 60); // Convert milliseconds to seconds
     sprintf(score_text, "Pla %d - %d Opp", scoreplayer, scoreopp);
     sprintf(time_text, "Time: %02d:%02d", minutes, seconds);
     //iSetColor(0,0,255);
@@ -744,14 +916,13 @@ void spritepositionupdate()
 }
 
 void timeUpdater(){
-    //printf("%d  %.3lf  %d %d\n",fps,timer,sec,minit);
     if(fps!=0)
-        timer=timer+(120.0/(fps));
-    sec=timer/120;
-    minit=timer/7200;
-    if((page_number==1 || page_number==2) && !(ballstate==2 || ballstate==-2))
     {
-        gametime=gametime+(120.0/(fps));
+        timer=timer+(120.0/(fps));
+        if((page_number==1 || page_number==2) && !(ballstate==2 || ballstate==-2) && gameended!=1)
+        {
+            gametime=gametime+(120.0/(fps));
+        }
     }
 }
 
@@ -1237,7 +1408,7 @@ void functioncaller()
         gkmoving();
         ballposition();
     }
-    if((int)timer%3==0)
+    if((int)timer%4==0)
     {
         handlecollission();
     }
@@ -1468,26 +1639,55 @@ void drawSpeedBar()
 
 int result()
 {
-    if(shootNumber==max_shoot)
+    if(page_number==3)
     {
-        iTextAdvanced(120,400," DRAW",0.5,3.5);
-    }
-    else if(shootNumber>=5 && penaltyscores[0]!=penaltyscores[1] && activeTeam==0 && kicked==0)
-    {
-        if(penaltyscores[0]>=penaltyscores[1])
+        if(shootNumber==max_shoot)
         {
-            iSetColor(255,255,0);
+            iSetColor(255,255,255);
+            iTextAdvanced(120,400," DRAW",0.5,3.5);
         }
-        else if(penaltyscores[0]<penaltyscores[1])
-            iSetColor(0,0,255);
-        iTextAdvanced(120,400,"YOU WON",0.5,3.5);
-        backbutton();
-        penaltyended=1;
-        return 1;
+        else if(shootNumber>=5 && penaltyscores[0]!=penaltyscores[1] && activeTeam==0 && kicked==0)
+        {
+            if(penaltyscores[0]>=penaltyscores[1])
+            {
+                iSetColor(255,255,0);
+            }
+            else if(penaltyscores[0]<penaltyscores[1])
+                iSetColor(0,0,255);
+            iTextAdvanced(120,400,"YOU WON",0.5,3.5);
+            backbutton();
+            penaltyended=1;
+            return 1;
+        }
+        else
+            return 0;
     }
-    else
-        return 0;
-
+    else if(page_number==1 || page_number==2)
+    {
+        if(gametime>90*60*8)
+        {
+            if(scoreopp==scoreplayer)
+            {
+                iSetColor(255,255,255);
+                iTextAdvanced(120,400," DRAW",0.5,3.5);
+            }
+            else
+            {
+                if(scoreopp>scoreplayer)
+                {
+                    iSetColor(255,255,0);
+                }
+                else if(scoreopp<scoreplayer)
+                    iSetColor(0,0,255);
+                iTextAdvanced(120,400,"YOU WON",0.5,3.5);
+            }
+            backbutton();
+            gameended=1;
+            return 1;
+        }
+        else
+            return 0;
+    }
 }
 
 void volumeMark() {
@@ -1503,104 +1703,86 @@ void volumeMark() {
         iText(330, 170, "OFF", GLUT_BITMAP_HELVETICA_18);
     }
 }
+int storedScorepla[100];
+int storedScoreopp[100];
+int count = 0;
+
+// Save a new score
 int scoreSave() {
-    FILE *ifp = fopen("scores.txt", "a+");
+    FILE *ifp = fopen("scores.txt", "a");  // Appends to file
     if (ifp == NULL) {
-        printf("Error opening scores.txt for writing: %s\n", strerror(errno));
+        printf("Error opening scores.txt for writing\n");
         return 0;
     }
-    if (page_number == 1 || page_number == 2) {
-        fprintf(ifp, "Match - Team 0: %d  Team 1: %d\n", scoreopp, scoreplayer);
-    } else if (page_number == 3) {
-        fprintf(ifp, "Penalty - Team 0: %d  Team 1: %d\n", penaltyscores[0], penaltyscores[1]);
+    printf("%d %d\n",scoreplayer, scoreopp);
+    if(page_number==1 || page_number==2){
+    fprintf(ifp, "Match: %d %d\n", scoreplayer, scoreopp);  // Save new entry
+    }
+    else if(page_number==3){
+    fprintf(ifp, "Penalty: %d %d\n", penaltyscores[0] ,penaltyscores[1]);  // Save new entry
     }
     fclose(ifp);
     return 1;
 }
-void high_score() {
-    FILE *ofp = fopen("scores.txt", "r");
-    if (ofp == NULL) {
-        printf("Error opening scores.txt: %s\n", strerror(errno));
-        score_count = 0;
+
+// Load scores from file
+void highScore() {
+    FILE *fp = fopen("scores.txt", "r");
+    if (fp == NULL) {
+        printf("No high score file found.\n");
+        count = 0;
         return;
     }
-
-    // Free previous scores
-    if (scores != NULL) {
-        free(scores);
-        scores = NULL;
-        score_count = 0;
-        max_scores = 0;
+    printf("%s %d %d",type[count],storedScorepla[count],storedScoreopp[count]);
+    count = 0;  // Always reset before loading
+    while (fscanf(fp, "%s %d %d", type[count], &storedScorepla[count], &storedScoreopp[count]) == 3){
+        count++;
+        if (count >= 100) break;  // Prevent buffer overflow
     }
+    char tempX[20]; int temp=0;
+    for(int i=0;i<count-1;i++){
+        for(int j=i+1;j<count;j++){
+                if(fabs(storedScoreopp[j]-storedScorepla[j])>fabs(storedScoreopp[i]-storedScorepla[i])){
+                    
+                    temp=storedScorepla[i];
+                    storedScorepla[i]=storedScorepla[j];
+                    storedScorepla[j]=temp;
 
-    char line[100];
-    score_count = 0;
-    max_scores = 10;
-    scores = (ScoreEntry *)malloc(max_scores * sizeof(ScoreEntry));
-    if (scores == NULL) {
-        printf("Initial memory allocation failed\n");
-        fclose(ofp);
-        return;
-    }
+                    temp=storedScoreopp[i];
+                    storedScoreopp[i]=storedScoreopp[j];
+                    storedScoreopp[j]=temp;
 
-    while (fgets(line, sizeof(line), ofp)) {
-        printf("Reading line: %s", line);
-        char type[10];
-        int team0, team1;
-        line[strcspn(line, "\n")] = 0;
-        if (sscanf(line, "%9s - Team 0: %d Team 1: %d", type, &team0, &team1) == 3) {
-            printf("Parsed: Type=%s, Team0=%d, Team1=%d\n", type, team0, team1);
-            if (score_count >= max_scores) {
-                max_scores *= 2;
-                ScoreEntry *temp = (ScoreEntry *)realloc(scores, max_scores * sizeof(ScoreEntry));
-                if (!temp) {
-                    printf("Realloc failed at score_count=%d\n", score_count);
-                    free(scores);
-                    scores = NULL;
-                    score_count = 0;
-                    max_scores = 0;
-                    fclose(ofp);
-                    return;
+                    strcpy(tempX,type[i]);
+                    strcpy(type[i],type[j]);
+                    strcpy(type[j],tempX);
                 }
-                scores = temp;
-            }
-            strncpy(scores[score_count].type, type, sizeof(scores[score_count].type) - 1);
-            scores[score_count].type[sizeof(scores[score_count].type) - 1] = '\0';
-            scores[score_count].team0_score = team0;
-            scores[score_count].team1_score = team1;
-            score_count++;
-        } else {
-            printf("Failed to parse line: %s\n", line);
         }
     }
-    fclose(ofp);
-    printf("Loaded %d scores\n", score_count);
-}
-void drawHighScores() {
-    // Draw white rectangle background (width=540, length=720)
-    iSetColor(255, 255, 255); // White
-    iFilledRectangle(50, 300, 440, 360); // Rectangle from (50, 300) to (490, 660)
-    printf("Drawing white rectangle at (50, 300, 440, 360)\n");
+    fclose(fp);
 
-    // Test text to confirm iText rendering
-    iSetColor(0, 0, 0); // Black text for contrast
-    iText(60, 640, "HIGH SCORES", GLUT_BITMAP_HELVETICA_18);
-    printf("Drawing test text 'HIGH SCORES' at (60, 640)\n");
-
-    // Draw scores or error message
-    if (scores == NULL || score_count == 0) {
-        iText(60, 610, "No scores loaded or file error", GLUT_BITMAP_HELVETICA_18);
-        printf("No scores to display (score_count=%d, scores=%p)\n", score_count, (void*)scores);
-        return;
+    // DEBUG
+    printf("Loaded count: %d\n", count);
+    for (int i = 0; i < count; i++) {
+        printf("Loaded scoretype: %s, storedScorepla: %d, storedScoreopp: %d\n",
+           type, storedScorepla[i], storedScoreopp[i]);
     }
+}
+
+// Draw scores on screen
+void drawHighScores() {
+    // Draw white rectangle background (width=440, height=360)
+    iSetColor(255, 255, 255); // White
+    iFilledRectangle(50, 300, 440, 360);
+
+    iSetColor(0, 0, 0); // Black text
+    iText(60, 640, "HIGH SCORES", GLUT_BITMAP_HELVETICA_18);
 
     char score_text[100];
-    int y = 610; // Start scores below title
-    for (int i = 0; i < score_count; i++) {
-        sprintf(score_text, "%s - Team 0: %d  Team 1: %d", scores[i].type, scores[i].team0_score, scores[i].team1_score);
+    int y = 610;
+    for (int i = 0; i < count; i++) {
+        sprintf(score_text, "%s - Blue: %d  Yellow: %d", type[i], storedScorepla[i], storedScoreopp[i]);;
         iText(60, y, score_text, GLUT_BITMAP_HELVETICA_18);
-        printf("Rendering score %d: %s at (60, %d)\n", i, score_text, y);
-        y -= 30; // Space scores vertically
+        y -= 30;
     }
 }
 /*
@@ -1627,10 +1809,14 @@ void iDraw()
     {
         drawfield();
         chooselevel();
-        functioncaller();
+        if(!gameended)
+        {
+            functioncaller();
+        }
         drawScoreboard();
         spritepositionupdate();
         spriteshow();
+        result();
     }
     else if(page_number==2)
     {
@@ -1639,6 +1825,7 @@ void iDraw()
         spritepositionupdate();
         spriteshow();
         drawScoreboard();
+        result();
     }
     else if(page_number==3)
     {
@@ -1672,22 +1859,23 @@ void iDraw()
     }
     else if(page_number==6)
     {
-        iShowImage(0,0,"help.png");
+        iShowImage(0,0,"help.jpg");
         backbutton();
     }
     else if(page_number==7)
     {
         iShowImage(0,0,"exitpage.jpg");
-        if(tracktime+75<=timer)
+        if(tracktime+75<=timer){
+            saveGame();
             exit(0);
-
+        }
     }
     iShowSpeed(10,10);
     char timertext[20];
     sprintf(timertext, "Timer: %lf", timer);
     iText(10,30,timertext);
     char fpss[20];
-    sprintf(fpss,"fps %d",fps);
+    sprintf(fpss,"gametime %lf",gametime);
     iText(50,50,fpss);
 }
 
@@ -1725,7 +1913,8 @@ void iMouse(int button, int state, int mx, int my)
                 if(my<=412  && my>=377)
                 {
                     page_number=1;
-                    gametime=0;
+                    resetvariables();
+                    gameLoaded=0;
                 }
                 else if(my<=370  && my>=333)
                 {
@@ -1748,8 +1937,18 @@ void iMouse(int button, int state, int mx, int my)
         }
         else if(page_number==1 || page_number==2)
         {
+            if(gameended==1)
+            {
+                if(mx>=width-70 && mx<=width-10 && my>=50 && my<=72)
+                {
+                    scoreSave();
+                    page_number=0;
+                    resetvariables();
+                }
+            }
             if(mx<width && mx>width-20 && my<length && my>length-20)
             {
+                loadGame();
                 scoreSave();
                 page_number=0;
                 iStopAllSounds();
@@ -1761,7 +1960,7 @@ void iMouse(int button, int state, int mx, int my)
             //crowd_sound();
             if(mx<width && mx>width-20 && my<length && my>length-20)
             {
-                scoreSave();
+                //scoreSave();
                 page_number=0;
                 resetPenaltyVariables();
             }
@@ -1771,7 +1970,7 @@ void iMouse(int button, int state, int mx, int my)
             {
                 if(mx>=width-70 && mx<=width-10 && my>=50 && my<=72)
                 {
-                    scoreSave();
+                    //scoreSave();
                     page_number=0;
                     resetPenaltyVariables();
                 }
@@ -1861,6 +2060,7 @@ int main(int argc, char *argv[])
     loadresources();
     //iSetTimer(1, timeUpdater);
     iInitializeSound();
+    highScore();
     iInitialize(width, length, "2D Football");
     return 0;
 }
